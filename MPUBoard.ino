@@ -1,8 +1,27 @@
-//the used MPU is a GY521
+/*
+ 
+  Hardware: GY-521 MPU-6050
+
+  this code returns an approximation of the angle in degres in which the drone is 
+  being orientated towards the X and Y axis.
+  
+*/
+
 #include<Wire.h>
 const int MPU_addr = 0x68; // I2C address of the MPU-6050
-float AcX, AcY, AcZ, Tmp, GyX, GyY, GyZ;
-float R,Rx,Ry,Rz,aRx,aRy,aRz;
+
+// When axis reads are storted in a list, the order is: X,Y,Z
+float rawAcc[3];
+float gAcc[3];
+float accAngle[2];
+
+float rawGyro[2];
+float gyroAngle[2];
+
+float rad_to_deg = 180/3.141592654;
+float currentTime, previousTime, elapsedTime;
+float totalAngle[2];
+
 
 void setupMPU() {
   Wire.begin();
@@ -10,46 +29,48 @@ void setupMPU() {
   Wire.write(0x6B);  // PWR_MGMT_1 register
   Wire.write(0);     // set to zero (wakes up the MPU-6050)
   Wire.endTransmission(true);
-  Serial.begin(9600);
+  Serial.begin(250000);
 }
 
 void loopMPU() {
+
+  //Keeps track of time elapsed between loop iterations, required for gyro angle formula
+  previousTime = currentTime;
+  currentTime = millis();
+  elapsedTime = (currentTime - previousTime)/1000;
+
+  
   Wire.beginTransmission(MPU_addr);
   Wire.write(0x3B);  // starting with register 0x3B (ACCEL_XOUT_H)
   Wire.endTransmission(false);
-  Wire.requestFrom(MPU_addr, 6, true); // request a total of 14 registers, in order: acc x,y,z; Temp; Gyro x,y,z
-  AcX = Wire.read() << 8 | Wire.read(); // 0x3B (ACCEL_XOUT_H) & 0x3C (ACCEL_XOUT_L)
-  AcY = Wire.read() << 8 | Wire.read(); // 0x3D (ACCEL_YOUT_H) & 0x3E (ACCEL_YOUT_L)
-  AcZ = Wire.read() << 8 | Wire.read(); // 0x3F (ACCEL_ZOUT_H) & 0x40 (ACCEL_ZOUT_L)
-
-  Rx = AcX/2048;
-  Ry = AcY/2048;
-  Rz = AcZ/2048;
-
-  R = sqrt(sq(Rx)+sq(Ry)+sq(Rz));
-  aRx = acos(Rx/R)*57296 / 1000;
-  aRy = acos(Ry/R)*57296 / 1000;
-  aRz = acos(Rz/R)*57296 / 1000;
+  Wire.requestFrom(MPU_addr, 6, true);
   
-  Serial.print("AcX = "); Serial.print(aRx);
-  Serial.print(" | AcY = "); Serial.print(aRy);
-  Serial.print(" | AcZ = "); Serial.println(aRz);
+  for(int i = 0; i <= 2; i++){
+    rawAcc[i] = Wire.read() << 8 | Wire.read(); //reads two registers for each read, low and high bits.
+    gAcc[i] = rawAcc[i]/16384; //converts raw data into units of g
+  }
+  
+  accAngle[0] = atan((gAcc[1]/16384.0)/sqrt(pow((gAcc[0]/16384.0),2) + pow((gAcc[2]/16384.0),2)))*rad_to_deg; 
+  accAngle[1] = atan(-1*(gAcc[0]/16384.0)/sqrt(pow((gAcc[1]/16384.0),2) + pow((gAcc[2]/16384.0),2)))*rad_to_deg; 
 
-  delay(333);
+  Wire.beginTransmission(MPU_addr);
+  Wire.write(0x43);  // starting with register 0x43 (GYRO_XOUT_H)
+  Wire.endTransmission(false);
+  Wire.requestFrom(MPU_addr, 4, true);
+   
+  for(int i = 0; i <= 1; i++){
+    rawGyro[i] = Wire.read() << 8 | Wire.read();
+    gyroAngle[i] = rawGyro[i]/131;  
+  }
+
+  //complimentary filter used to reduce noise and provide accurate angle reads
+  totalAngle[0] = 0.98 *(totalAngle[0] + gyroAngle[0]*elapsedTime) + 0.02*accAngle[0];  
+  totalAngle[1] = 0.98 *(totalAngle[1] + gyroAngle[1]*elapsedTime) + 0.02*accAngle[1];
+
+  //debugging
+  Serial.print("X:  ");Serial.print(totalAngle[0]);
+  Serial.print(" |  Y:  ");Serial.println(totalAngle[1]);
 }
-
-
-
-//  Tmp = Wire.read() << 8 | Wire.read(); // 0x41 (TEMP_OUT_H) & 0x42 (TEMP_OUT_L)
-//  GyX = Wire.read() << 8 | Wire.read(); // 0x43 (GYRO_XOUT_H) & 0x44 (GYRO_XOUT_L)
-//  GyY = Wire.read() << 8 | Wire.read(); // 0x45 (GYRO_YOUT_H) & 0x46 (GYRO_YOUT_L)
-//  GyZ = Wire.read() << 8 | Wire.read(); // 0x47 (GYRO_ZOUT_H) & 0x48 (GYRO_ZOUT_L)
-
-//  Serial.print(" | Tmp = "); Serial.print(Tmp / 340.00 + 36.53); //equation for temperature in degrees C from datasheet
-//  Serial.print(" | GyX = "); Serial.print(GyX);
-//  Serial.print(" | GyY = "); Serial.print(GyY);
-//  Serial.print(" | GyZ = "); Serial.println(GyZ);
-
 
 
 
